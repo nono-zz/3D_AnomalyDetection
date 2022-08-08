@@ -3,13 +3,22 @@ import tifffile as tiff
 import os
 import glob
 
+
+def depthNormFN(img, depthMax =  0.727695):
+    imgNorm = img/depthMax * 255
+    return imgNorm
+    
+
+
+
 dataset_root = '/home/zhaoxiang/3D-ADS/datasets/mvtec3d'
 objects = os.listdir(dataset_root)
 objects.sort()
 trainOrtest = ['test', 'train', 'validation']
 fileCategory = 'xyz'
 
-depthMax = 0
+depthMax = 0.727695
+depthMin = 0
 
 for object in objects:
     if '.' in object:
@@ -35,11 +44,20 @@ for object in objects:
                 tiff_img = tiff.imread(file)
                 depthImg = tiff_img[:,:,2]
                 
-                if depthMax < depthImg.max():
-                    depthMax = depthImg.max()
-                # depthImg = 
+                
+                # depth image normalization
+                depthImgNorm = depthNormFN(depthImg)
+                
+                # save the img
+                new_path = file.replace('xyz', 'depth')
+                new_path = new_path.replace('tiff', 'png')
+                cv2.imwrite(new_path, depthImgNorm)
+                
+                # if depthMin > depthImg.min():
+                #     depthMin = depthImg.min()
+                # # depthImg = 
 
-print(depthMax)
+# print(depthMin)
             
             
         
