@@ -17,8 +17,8 @@ objects.sort()
 trainOrtest = ['test', 'train', 'validation']
 fileCategory = 'xyz'
 
-depthMax = 0.727695
-depthMin = 0
+depthMax = 0.727695         # the max depth of the whole dataset
+depthMin = 0                # the min depth counted
 
 for object in objects:
     if '.' in object:
@@ -46,12 +46,13 @@ for object in objects:
                 
                 
                 # depth image normalization
-                depthImgNorm = depthNormFN(depthImg)
+                # depthImgNorm = depthNormFN(depthImg)
                 
                 # save the img
                 new_path = file.replace('xyz', 'depth')
                 new_path = new_path.replace('tiff', 'png')
-                cv2.imwrite(new_path, depthImgNorm)
+                # cv2.imwrite(new_path, depthImgNorm)
+                cv2.imwrite(new_path, depthImg * 255)
                 
                 # if depthMin > depthImg.min():
                 #     depthMin = depthImg.min()
