@@ -1,7 +1,10 @@
 import torch
-from data_loader import MVTecDRAEMTrainDataset
 from torch.utils.data import DataLoader
 from torch import optim
+import numpy as np
+
+import torch.nn.MSELoss as MSEloss
+
 from models.model_DRAEM import ReconstructiveSubNetwork, DiscriminativeSubNetwork
 from loss import FocalLoss, SSIM
 import os
@@ -11,8 +14,9 @@ import tqdm
 import torch.nn.functional as F
 import random
 
-from dataloader_zzx import MVTecDataset
-from evaluation import evaluation
+import dataset.mvtec as mvtec
+from dataset.mvtec import MVTecDataset
+
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -21,14 +25,6 @@ def get_lr(optimizer):
 def mean(list_x):
     return sum(list_x)/len(list_x)
 
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        m.weight.data.normal_(0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        m.weight.data.normal_(1.0, 0.02)
-        m.bias.data.fill_(0)
-        
 def get_data_transforms(size, isize):
     # mean_train = [0.485]         # how do you set the mean_train and std_train in the get_data_transforms function?
     # mean_train = [-0.1]
@@ -50,236 +46,89 @@ def get_data_transforms(size, isize):
 
         
         
-def add_Gaussian_noise(x, noise_res, noise_std, img_size):
-    ns = torch.normal(mean=torch.zeros(x.shape[0], x.shape[1], noise_res, noise_res), std=noise_std).to(x.device)
-
-    ns = F.upsample_bilinear(ns, size=[img_size, img_size])
-
-    # Roll to randomly translate the generated noise.
-    roll_x = random.choice(range(128))
-    roll_y = random.choice(range(128))
-    ns = torch.roll(ns, shifts=[roll_x, roll_y], dims=[-2, -1])
-
-    mask = x.sum(dim=1, keepdim=True) > 0.01
-    ns *= mask # Only apply the noise in the foreground.
-    res = x + ns
-    
-    return res
-        
         
 def DRAEM_train(args, dataloader, model, model_seg, loss_l2, loss_ssim, loss_focal, optimizer, visualizer, scheduler, run_name):
-    n_iter = 0
-    for epoch in range(args.epochs):
-        print("Epoch: "+str(epoch))
-        for i_batch, sample_batched in enumerate(dataloader):
-            gray_batch = sample_batched["image"].cuda()
-            aug_gray_batch = sample_batched["augmented_image"].cuda()
-            anomaly_mask = sample_batched["anomaly_mask"].cuda()
+    class_names = mvtec.CLASS_NAMES if args.class_name == 'all' else [args.class_name]
+    device = args.device
 
-            gray_rec = model(aug_gray_batch)
-            joined_in = torch.cat((gray_rec, aug_gray_batch), dim=1)
+    for class_name in class_names:
+        best_img_roc = -1
+        best_pxl_roc = -1
+        best_pxl_pro = -1
+        print(' ')
+        print('%s | newly initialized...' % class_name)
+        
+        
+    train_dataset    = MVTecDataset(dataset_path  = args.data_path, 
+                                    class_name    =     class_name, 
+                                    resize        =            256,
+                                    cropsize      =      args.size,
+                                    is_train      =           True,
+                                    wild_ver      =        args.Rd)
+        
+    test_dataset     = MVTecDataset(dataset_path  = args.data_path, 
+                                    class_name    =     class_name, 
+                                    resize        =            256,
+                                    cropsize      =      args.size,
+                                    is_train      =          False,
+                                    wild_ver      =        args.Rd)
 
-            out_mask = model_seg(joined_in)
-            out_mask_sm = torch.softmax(out_mask, dim=1)
 
-            l2_loss = loss_l2(gray_rec,gray_batch)
-            ssim_loss = loss_ssim(gray_rec, gray_batch)
+    train_loader   = DataLoader(dataset         = train_dataset, 
+                                batch_size      =             1, 
+                                pin_memory      =          True,
+                                shuffle         =          True,
+                                drop_last       =          True,)
 
-            segment_loss = loss_focal(out_mask_sm, anomaly_mask)
-            loss = l2_loss + ssim_loss + segment_loss
+    test_loader   =  DataLoader(dataset        =   test_dataset, 
+                                batch_size     =              1, 
+                                pin_memory     =           True,)
+    
+    
+    if args.cnn == 'wrn50_2':
+        model = wrn50_2(pretrained=True, progress=True)
+    elif args.cnn == 'res18':
+        model = res18(pretrained=True,  progress=True)
+    elif args.cnn == 'effnet-b5':
+        model = effnet.from_pretrained('efficientnet-b5')
+    elif args.cnn == 'vgg19':
+        model = vgg19(pretrained=True, progress=True)
+    elif args.cnn == 'DRAEM':
+        rgb2depthModel = DiscriminativeSubNetwork(in_channels=3, out_channels=1)
+        depth2rgbModel = DiscriminativeSubNetwork(in_channels=1, out_channels=3)
+        
+    rgb2depthModel, depth2rgbModel = rgb2depthModel.to(device), depth2rgbModel.to(device)
+        
+    loss_MSE = torch.nn.MSELoss()
+    learning_rate = args.lr
+    optimizer = torch.optim.Adam(list(rgb2depthModel.parameters())+list(depth2rgbModel.parameters()), lr=learning_rate)
+    
+    for epoch in tqdm(range(args.epochs), '%s -->'%(class_name)):
 
+        rgb2depthModel.train()
+        depth2rgbModel.train()
+        
+        loss_list = []
+        for (rgb, pc, depth, label, mask) in train_loader:
+            
+            
+            depthPred = rgb2depthModel(rgb.to(device))
+            rgbPred = depth2rgbModel(depth.to(device))
+            
+            loss = loss_MSE(rgb, rgbPred) + loss_MSE(depth, depthPred)
+            
             optimizer.zero_grad()
-
             loss.backward()
             optimizer.step()
 
-            if args.visualize and n_iter % 20 == 0:
-                visualizer.plot_loss(l2_loss, n_iter, loss_name='l2_loss')
-                visualizer.plot_loss(ssim_loss, n_iter, loss_name='ssim_loss')
-                visualizer.plot_loss(segment_loss, n_iter, loss_name='segment_loss')
-            if args.visualize and n_iter % 50 == 0:
-                t_mask = out_mask_sm[:, 1:, :, :]
-                visualizer.visualize_image_batch(aug_gray_batch, n_iter, image_name='batch_augmented')
-                visualizer.visualize_image_batch(gray_batch, n_iter, image_name='batch_recon_target')
-                visualizer.visualize_image_batch(gray_rec, n_iter, image_name='batch_recon_out')
-                visualizer.visualize_image_batch(anomaly_mask, n_iter, image_name='mask_target')
-                visualizer.visualize_image_batch(t_mask, n_iter, image_name='mask_out')
-
-
-            n_iter +=1
-
-        scheduler.step()
+            loss_list.append(loss.item())
+        
+        print('loss is:   ', np.mean(loss_list))
+        print('the radium of loss function is: ', loss_fn.r.item())
 
         torch.save(model.state_dict(), os.path.join(args.checkpoint_path, run_name+".pckl"))
         torch.save(model_seg.state_dict(), os.path.join(args.checkpoint_path, run_name+"_seg.pckl"))
         
-        
-# def autoencoder_train()
-
-
-def train_on_device(args):
-
-    if not os.path.exists(args.checkpoint_path):
-        os.makedirs(args.checkpoint_path)
-
-    if not os.path.exists(args.log_path):
-        os.makedirs(args.log_path)
-
-    # run_name = args.experiment_name + '_' +str(args.lr)+'_'+str(args.epochs)+'_bs'+str(args.bs)+"_"+"Guassian_blur"
-    run_name = args.experiment_name + '_' +str(args.lr)+'_'+str(args.epochs)+'_bs'+str(args.bs)+"_" + args.model + "_" + args.process_method
-    ckp_path = os.path.join('/home/zhaoxiang/baselines/pretrain/output', run_name, 'last.pth')
-    visualizer = TensorboardVisualizer(log_dir=os.path.join(args.log_path, run_name+"/"))
-
-
-    if args.backbone == 'DRAEM':
-        model = ReconstructiveSubNetwork(in_channels=3, out_channels=3)
-        model.cuda()
-        model.apply(weights_init)
-
-        model_seg = DiscriminativeSubNetwork(in_channels=6, out_channels=2)
-        model_seg.cuda()
-        model_seg.apply(weights_init)
-        
-        loss_l2 = torch.nn.modules.loss.MSELoss()
-        loss_ssim = SSIM()
-        loss_focal = FocalLoss()
-
-        dataset = MVTecDRAEMTrainDataset('/home/zhaoxiang/dataset/{}/train/good'.format(args.dataset_name), args.anomaly_source_path, resize_shape=[args.img_size, args.img_size])
-        dataloader = DataLoader(dataset, batch_size=args.bs,
-                            shuffle=True, num_workers=16)
-
-        optimizer = torch.optim.Adam([
-                                        {"params": model.parameters(), "lr": args.lr},
-                                        {"params": model_seg.parameters(), "lr": args.lr}])
-
-        scheduler = optim.lr_scheduler.MultiStepLR(optimizer,[args.epochs*0.8,args.epochs*0.9],gamma=0.2, last_epoch=-1)
-
-
-   
-
-
-        DRAEM_train(args, dataloader, model, model_seg, loss_l2, loss_ssim, loss_focal, optimizer, visualizer, scheduler, run_name)
-        
-    elif args.backbone == 'noise':
-        from model_noise import UNet
-        main_path = '/home/zhaoxiang/dataset/{}'.format(args.dataset_name)
-    
-    # data preparation
-        data_transform, gt_transform = get_data_transforms(args.img_size, args.img_size)
-        # data_transform, gt_transform = cutpaste_transform(args.img_size, args.img_size)
-        test_transform, _ = get_data_transforms(args.img_size, args.img_size)
-    
-        dirs = os.listdir(main_path)
-        
-        for dir_name in dirs:
-            if 'train' in dir_name:
-                train_dir = dir_name
-            elif 'test' in dir_name:
-                if 'label' in dir_name:
-                    label_dir = dir_name
-                else:
-                    test_dir = dir_name
-                
-        dirs = [train_dir, test_dir, label_dir]                
-        
-        device = torch.device('cuda:1')
-        n_input = 1
-        n_classes = 1           # the target is the reconstructed image
-        depth = 4
-        wf = 6
-        
-        if args.model == 'ws_skip_connection':
-            model = UNet(in_channels=n_input, n_classes=n_classes, norm="group", up_mode="upconv", depth=depth, wf=wf, padding=True).to(device)
-        elif args.model == 'DRAEM_reconstruction':
-            model = ReconstructiveSubNetwork(in_channels=n_input, out_channels=n_input).to(device)
-        elif args.model == 'DRAEM_discriminitive':  
-            model = DiscriminativeSubNetwork(in_channels=n_input, out_channels=n_input).to(device)
-        
-        train_data = MVTecDataset(root=main_path, transform = test_transform, gt_transform=gt_transform, phase='train', dirs = dirs, data_source=args.experiment_name)
-        val_data = MVTecDataset(root=main_path, transform = test_transform, gt_transform=gt_transform, phase='test', dirs = dirs, data_source=args.experiment_name)
-        test_data = MVTecDataset(root=main_path, transform = test_transform, gt_transform=gt_transform, phase='test', dirs = dirs, data_source=args.experiment_name)
-        train_dataloader = torch.utils.data.DataLoader(train_data, batch_size = args.bs, shuffle=True)
-        val_dataloader = torch.utils.data.DataLoader(val_data, batch_size = args.bs, shuffle = False)
-        test_dataloader = torch.utils.data.DataLoader(test_data, batch_size = 1, shuffle = False)
-         
-         
-        loss_MSE = torch.nn.MSELoss()
-        
-        loss_l1 = torch.nn.L1Loss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        
-        # if (epoch) % 10 == 0:
-        # epoch = 0
-        # model.eval()
-        # evaluation(args, model, test_dataloader, epoch, device, loss_l1, visualizer, run_name)
-        # for epoch in tqdm(range(args.epochs)):
-        for epoch in range(args.epochs):
-            model.train()
-            loss_list = []
-            for img in train_dataloader:         
-
-                img = img.to(device)                
-                
-                input = add_Gaussian_noise(img, args.noise_res, args.noise_std, args.img_size)         # if noise -> reconstruction
-                
-                output = model(input)
-                # loss = loss_MSE(input, output)
-                loss = loss_l1(img, output)
-
-                # loss back propogation
-                
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-            
-                loss_list.append(loss.item())
-                
-            print('epoch [{}/{}], loss:{:.4f}'.format(args.epochs, epoch, mean(loss_list)))
-            
-            
-            visualizer.plot_loss(mean(loss_list), epoch, loss_name='L1_loss')
-            visualizer.visualize_image_batch(input, epoch, image_name='input')
-            visualizer.visualize_image_batch(img, epoch, image_name='target')
-            visualizer.visualize_image_batch(output, epoch, image_name='output')
-            
-            
-            
-            # print('epoch [{}/{}], loss:{:.4f}'.format(epoch+1, epochs, np.mean(loss_list)))
-            # with open(result_path, 'a') as f:
-            #     # f.writelines('epoch [{}/{}], loss:{:.4f}, \n'.format(epoch+1, epochs, np.mean(loss_list)))
-            #     f.writelines('epoch [{}/{}], loss:{:.4f}, loss_reconstruction:{:.4f}, loss_feature:{:.4f} \n'.format(epoch+1, epochs, np.mean(loss_list), np.mean(loss2_list), np.mean(loss1_list)))
-            
-            if (epoch) % 3 == 0:
-                model.eval()
-                error_list = []
-                for img, gt, label, img_path, saves in val_dataloader:
-                    img = img.to(device)
-                    input = img
-                    output = model(input)
-                    loss = loss_l1(input, output)
-                    
-                    error_list.append(loss.item())
-                
-                print('eval [{}/{}], loss:{:.4f}'.format(args.epochs, epoch, mean(error_list)))
-                visualizer.plot_loss(mean(error_list), epoch, loss_name='L1_loss_eval')
-                visualizer.visualize_image_batch(input, epoch, image_name='target_eval')
-                visualizer.visualize_image_batch(output, epoch, image_name='output_eval')
-                
-            if (epoch) % 10 == 0:
-                model.eval()
-                evaluation(args, model, test_dataloader, epoch, device, loss_l1, visualizer, run_name)
-            
-                torch.save(model.state_dict(), ckp_path)
-                
-            #     dice_value, auroc_px, auroc_sp, aupro_px = evaluation(stu_enc, tea_enc, bn, test_dataloader, device, epoch, config)
-            #     # dice_value = evaluation(stu_enc, tea_enc, bn, test_dataloader, device, epoch, config)
-            #     print('dice_score is:', dice_value, '\n'
-            #         'Pixel Auroc:{:.3f}, Sample Auroc{:.3f}, Pixel Aupro{:.3}'.format(auroc_px, auroc_sp, aupro_px))
-            #     # print('dice_score is:', dice_value, '\n')
-                
-            #     with open(result_path, 'a') as f:
-            #         f.writelines('dice_value [{}/{}] :{:.4f}, \n Pixel Auroc:{:.3f}, Sample Auroc{:.3f}, Pixel Aupro{:.3}'.format(epoch+1, epochs, dice_value, auroc_px, auroc_sp, aupro_px))
-                    # f.writelines('Threshold:{}, dice_value :{:.4f}, \n'.format(config['threshold'], dice_value))
                 
         
         
@@ -314,5 +163,4 @@ if __name__=="__main__":
     args = parser.parse_args()
 
     with torch.cuda.device(args.gpu_id):
-        train_on_device(args)
-
+        DRAEM_train(args)
