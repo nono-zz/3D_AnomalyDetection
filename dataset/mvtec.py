@@ -5,6 +5,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms as T
 from utils.mvtec3d_util import read_tiff_organized_pc, resize_organized_pc, organized_pc_to_depth_map
 import numpy as np
+import cv2
 
 CLASS_NAMES  = ['bagel', 'cable_gland', 'carrot', 'cookie', 'dowel', 'foam', 'peach', 'potato', 'rope', 'tire']
 
@@ -23,7 +24,7 @@ class MVTecDataset(Dataset):
                                         T.Normalize(mean=[0.485, 0.456, 0.406],
                                                     std=[0.229, 0.224, 0.225])])
 
-        self.transform_mask =    T.Compose([T.Resize(resize, Image.NEAREST),
+        self.transform_mask =    T.Compose([T.Resize(resize),
                                             T.ToTensor()])
         
         self.transform_FPFH = T.Compose([T.Resize(resize, Image.ANTIALIAS),
@@ -133,7 +134,8 @@ class MVTec_RGBD_Dataset(Dataset):
             self.transform_depth =   T.Compose([T.Resize(resize, Image.ANTIALIAS),
                                             T.ToTensor()])
         
-        self.transform_mask =    T.Compose([T.Resize(resize, Image.NEAREST),
+        self.transform_mask =    T.Compose([T.ToPILImage(),
+                                            T.Resize(resize),
                                             T.ToTensor()])
         
     def __getitem__(self, idx):
@@ -152,7 +154,10 @@ class MVTec_RGBD_Dataset(Dataset):
         if label == 0:
             mask = torch.zeros([1, self.resize, self.resize])
         else:
-            mask = Image.open(mask)
+            # mask = Image.open(mask)
+            # mask = np.array(mask)
+            mask = cv2.imread(mask, cv2.IMREAD_GRAYSCALE)
+            mask = np.where(mask > 0, 255, 0).astype(np.uint8)
             mask = self.transform_mask(mask)
         
     
