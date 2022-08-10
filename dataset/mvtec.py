@@ -39,7 +39,7 @@ class MVTecDataset(Dataset):
         
         
         if label == 0:
-            mask = torch.zeros([1, self.cropsize, self.cropsize])
+            mask = torch.zeros([1, self.resize, self.resize])
         else:
             mask = Image.open(mask)
             mask = self.transform_mask(mask)
@@ -108,7 +108,7 @@ class MVTecDataset(Dataset):
 
 
 class MVTec_RGBD_Dataset(Dataset):
-    def __init__(self, dataset_path, class_name='bottle', is_train=True, resize=256):
+    def __init__(self, dataset_path, class_name='bottle', is_train=True, resize=256, normalize=False):
         assert class_name in CLASS_NAMES, 'class_name: {}, should be in {}'.format(class_name, CLASS_NAMES)
         self.dataset_path = dataset_path
         self.class_name = class_name
@@ -117,40 +117,46 @@ class MVTec_RGBD_Dataset(Dataset):
 
         self.rgb_paths, self.depth_paths, self.y, self.mask = self.load_dataset_folder()
         
-        self.transform_x =   T.Compose([T.Resize(resize, Image.ANTIALIAS),
-                                        T.ToTensor(),
-                                        T.Normalize(mean=[0.485, 0.456, 0.406],
-                                                    std=[0.229, 0.224, 0.225])])
-
+        
+        if normalize:
+            self.transform_rgb =   T.Compose([T.Resize(resize, Image.ANTIALIAS),
+                                            T.ToTensor(),
+                                            T.Normalize(mean=[0.485, 0.456, 0.406],
+                                                        std=[0.229, 0.224, 0.225])])
+            self.transform_depth =   T.Compose([T.Resize(resize, Image.ANTIALIAS),
+                                            T.ToTensor(),
+                                            T.Normalize(mean=[0.485],
+                                                        std=[0.229])])
+        else:
+            self.transform_rgb =   T.Compose([T.Resize(resize, Image.ANTIALIAS),
+                                            T.ToTensor()])
+            self.transform_depth =   T.Compose([T.Resize(resize, Image.ANTIALIAS),
+                                            T.ToTensor()])
+        
         self.transform_mask =    T.Compose([T.Resize(resize, Image.NEAREST),
                                             T.ToTensor()])
         
-        self.transform_FPFH = T.Compose([T.Resize(resize, Image.ANTIALIAS),
-                                        T.ToTensor(),
-                                        T.Normalize(mean=[0.456],
-                                                    std=[0.224])])
-
     def __getitem__(self, idx):
         rgb_path, depth_path, label, mask = self.rgb_paths[idx], self.depth_paths[idx], self.y[idx], self.mask[idx]
         
         # read rgb
         rgb_img = Image.open(rgb_path).convert('RGB')
-        rgb_img = self.transform_x(rgb_img)
+        rgb_img = self.transform_rgb(rgb_img)
         
         # read depth
-        depth_img = Image.open(depth_path).convert('RGB')
-        depth_img = self.transform_x(rgb_img) 
+        depth_img = Image.open(depth_path)
+        depth_img = self.transform_depth(depth_img) 
         
         
         
         if label == 0:
-            mask = torch.zeros([1, self.cropsize, self.cropsize])
+            mask = torch.zeros([1, self.resize, self.resize])
         else:
             mask = Image.open(mask)
             mask = self.transform_mask(mask)
         
     
-        return rgb_img
+        return rgb_img, depth_img, mask, label
     
 
     def __len__(self):
