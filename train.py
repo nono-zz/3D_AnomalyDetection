@@ -161,8 +161,6 @@ def DRAEM_train(args):
                 torch.save(model.state_dict(), os.path.join(checkpoint_path, "model.pckl"))
         
                 
-
-        
         
 
 if __name__=="__main__":

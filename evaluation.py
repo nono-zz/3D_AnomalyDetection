@@ -46,6 +46,7 @@ def test(args, model, test_loader, class_name, visualizer, device, lossFN, epoch
                 
         else:
             error = lossFN(rgb, depth, rgbPred, depthPred)
+            
         
         error_list.append(error.item())
         
@@ -61,19 +62,20 @@ def test(args, model, test_loader, class_name, visualizer, device, lossFN, epoch
         print('test: epoch [{}/{}], tot_error:{:.4f}'.format(epoch, args.epochs, np.mean(error_list)))
     
     
-    # print('epoch {}, loss is: {} ',format(epoch, np.mean(loss_list)))
-
-    # if (epoch+1) % 3 == 0:
-    #     current_path = os.path.dirname(os.path.abspath(__file__))
+    
+def evaluation():
+    anomaly_map, _ = cal_anomaly_map(inputs, outputs, img.shape[-1], amap_mode='a')
+    # anomaly_map = gaussian_filter(anomaly_map, sigma=4)         # why use gaussian filter to blur the anomaly map?
+    gt[gt > 0.5] = 1
+    gt[gt <= 0.5] = 0
+    if label.item()!=0:
+        aupro_list.append(compute_pro(gt.squeeze(0).cpu().numpy().astype(int),
+                                        anomaly_map[np.newaxis,:,:]))
+    gt_list_px.extend(gt.cpu().numpy().astype(int).ravel())
+    pr_list_px.extend(anomaly_map.ravel())
+    gt_list_sp.append(np.max(gt.cpu().numpy().astype(int)))
+    pr_list_sp.append(np.max(anomaly_map))
         
-    #     checkpoint_path = current_path + args.checkpoint_path
-    #     if not os.path.exists(checkpoint_path):
-    #         os.mkdir(checkpoint_path)
-            
-    #     torch.save(rgb2depthModel.state_dict(), os.path.join(checkpoint_path, "rgb2depthModel.pckl"))
-    #     torch.save(depth2rgbModel.state_dict(), os.path.join(checkpoint_path, "depth2rgbModel.pckl"))
-        
-                
 
         
 

@@ -9,10 +9,10 @@ class CrossPredictionNetwork(nn.Module):
         super(CrossPredictionNetwork, self).__init__()
         base_width = base_channels
         self.encoder_rgb = EncoderDiscriminative(3, base_width)
-        self.decoder_rgb = DecoderDiscriminative(base_width, 1)
+        self.decoder_rgb = DecoderDiscriminative(base_width, 3)
         
         self.encoder_depth = EncoderDiscriminative(1, base_width)
-        self.decoder_depth = DecoderDiscriminative(base_width, 3)
+        self.decoder_depth = DecoderDiscriminative(base_width, 1)
     
         #self.segment_act = torch.nn.Sigmoid()
         self.out_features = out_features
@@ -21,8 +21,16 @@ class CrossPredictionNetwork(nn.Module):
         depth1, depth2, depth3, depth4, depth5, depthFlow = self.encoder_depth(depth)
         
         
-        output_depth, db2, db3 = self.decoder_rgb(depth1, depth2, depth3, rgb4, rgb5, rgbFlow)
-        output_rgb, db2, db3 = self.decoder_depth(rgb1, rgb2, rgb3, depth4, depth5, depthFlow)
+        # output_depth, db2, db3 = self.decoder_rgb(depth1, depth2, depth3, rgb4, rgb5, rgbFlow)
+        # output_rgb, db2, db3 = self.decoder_depth(rgb1, rgb2, rgb3, depth4, depth5, depthFlow)
+        
+        
+        # output_depth, db2, db3 = self.decoder_rgb(rgb1, rgb2, rgb3, depth4, depth5, depthFlow)
+        # output_rgb, db2, db3 = self.decoder_depth(depth1, depth2, depth3, rgb4, rgb5, rgbFlow)
+        
+        output_rgb, db2, db3 = self.decoder_rgb(rgb1, rgb2, rgb3, rgb4, rgb5, rgbFlow)
+        output_depth, db2, db3 = self.decoder_depth(depth1, depth2, depth3, depth4, depth5, depthFlow)
+        
         
         if self.out_features:
             return output_segment, b2, b3, db2, db3
