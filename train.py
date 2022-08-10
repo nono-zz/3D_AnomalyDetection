@@ -19,7 +19,7 @@ from loss.loss import Loss
 # from torch.utils.tensorboard import SummaryWriter
 from utils.tensorboard_visualizer import TensorboardVisualizer
 
-from evaluation import test
+from evaluation import test, evaluation
 
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
@@ -113,6 +113,7 @@ def DRAEM_train(args):
         for epoch in tqdm(range(epochs), '%s -->'%(class_name)):
 
             model.train()
+            evaluation(args, model, test_loader, class_name, visualizer, device, epoch)
             
             loss_list, mseLoss_list, cosLoss_list = [], [], []
             for (rgb, depth, mask, label) in train_loader:
