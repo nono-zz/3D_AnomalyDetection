@@ -113,7 +113,6 @@ def DRAEM_train(args):
         for epoch in tqdm(range(epochs), '%s -->'%(class_name)):
 
             model.train()
-            evaluation(args, model, test_loader, class_name, visualizer, device, epoch)
             
             loss_list, mseLoss_list, cosLoss_list = [], [], []
             for (rgb, depth, mask, label) in train_loader:
@@ -150,8 +149,10 @@ def DRAEM_train(args):
                 print('epoch [{}/{}], loss is: {} '.format(epoch, args.epochs, np.mean(loss_list)))
             
             
-            test(args, model, test_loader, class_name, visualizer, device, lossFN, epoch)
-    
+            # test(args, model, test_loader, class_name, visualizer, device, lossFN, epoch)
+            auroc_px, auroc_sp, aupro_px = evaluation(args, model, test_loader, class_name, visualizer, device, epoch)
+        
+            print('Pixel Auroc:{:.3f}, Sample Auroc{:.3f}, Pixel Aupro{:.3}'.format(auroc_px, auroc_sp, aupro_px))
             if (epoch+1) % 3 == 0:
                 # current_path = os.path.dirname(os.path.abspath(__file__))
                 current_path = '/home/zhaoxiang'                
